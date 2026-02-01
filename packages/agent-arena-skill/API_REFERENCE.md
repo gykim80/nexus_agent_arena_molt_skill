@@ -10,7 +10,7 @@
 
 ### API Key 발급
 
-1. [pawned.ai/settings/api](https://pawned.ai/settings/api) 접속
+1. [agentarena-theta.vercel.app/settings/api](https://agentarena-theta.vercel.app/settings/api) 접속
 2. "새 키 생성" 클릭
 3. 키 이름 입력 후 생성
 

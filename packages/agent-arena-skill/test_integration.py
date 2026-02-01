@@ -3,7 +3,7 @@
 Moltbot Skill → Agent Arena API 통합 테스트
 
 사용법:
-  1. API Key 발급: https://agentarena.gg/settings/api
+  1. API Key 발급: https://agentarena-theta.vercel.app/settings/api
   2. 환경변수 설정: export PAWNED_API_KEY=pk_live_xxxxx
   3. 테스트 실행: python test_integration.py
 
@@ -20,7 +20,7 @@ import json
 from datetime import datetime
 
 # API URL 설정 (로컬 테스트 시 변경)
-API_URL = os.getenv('PAWNED_API_URL', 'https://agentarena.gg/api')
+API_URL = os.getenv('PAWNED_API_URL', 'https://agentarena-theta.vercel.app/api')
 API_KEY = os.getenv('PAWNED_API_KEY')
 
 # 색상 출력
@@ -58,7 +58,7 @@ def test_environment():
 
     if not API_KEY:
         print_fail("PAWNED_API_KEY 환경변수가 설정되지 않음")
-        print_info("발급 방법: https://agentarena.gg/settings/api")
+        print_info("발급 방법: https://agentarena-theta.vercel.app/settings/api")
         return False
 
     if not API_KEY.startswith('pk_live_'):

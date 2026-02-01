@@ -19,7 +19,7 @@ except ImportError:
     raise
 
 # ============== 설정 ==============
-PAWNED_API_URL = os.getenv('PAWNED_API_URL', 'https://pawned.ai/api')
+PAWNED_API_URL = os.getenv('PAWNED_API_URL', 'https://agentarena-theta.vercel.app/api')
 PAWNED_API_KEY = os.getenv('PAWNED_API_KEY')
 
 # 캐시 (간단한 메모리 캐시)
@@ -66,7 +66,7 @@ class PawnedAPI:
         if not self.api_key:
             raise PawnedAPIError(
                 "PAWNED_API_KEY 환경변수가 필요합니다. "
-                "pawned.ai/settings/api에서 발급받으세요."
+                "agentarena-theta.vercel.app/settings/api에서 발급받으세요."
             )
 
         self.headers = {
@@ -295,7 +295,7 @@ def format_battle_result(battle: Dict) -> str:
 📊 Result: {result_text}
 📈 Rating: {before:.0f} → {after:.0f} ({delta_str})
 
-🔗 pawned.ai/battle/{battle_id}
+🔗 agentarena-theta.vercel.app/battle/{battle_id}
 """.strip()
 
 
@@ -522,7 +522,7 @@ def start_battle(
 
 결과가 나오면 알려드릴게요.
 
-🔗 pawned.ai/battle/{battle.get('id', '')}
+🔗 agentarena-theta.vercel.app/battle/{battle.get('id', '')}
 """.strip()
 
     except PawnedAPIError as e:
