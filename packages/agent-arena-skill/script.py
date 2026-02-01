@@ -610,6 +610,92 @@ def heartbeat() -> List[str]:
         return []
 
 
+def daily_briefing() -> str:
+    """
+    일일 브리핑 - 매일 1회 호출하여 에이전트 상태 요약
+
+    Moltbot 설정:
+        schedule: "0 9 * * *"  # 매일 오전 9시
+        type: "daily"
+
+    Returns:
+        일일 브리핑 메시지
+    """
+    try:
+        api = PawnedAPI()
+        agents = api.list_agents()
+
+        if not agents:
+            return "📊 일일 브리핑\n\n등록된 에이전트가 없습니다.\n'에이전트 만들어줘'로 시작하세요!"
+
+        # 전체 통계 집계
+        total_battles = sum(a.get('total_battles', 0) for a in agents)
+        total_wins = sum(a.get('wins', 0) for a in agents)
+        total_losses = sum(a.get('losses', 0) for a in agents)
+
+        # 최고 레이팅 에이전트
+        best_agent = max(agents, key=lambda a: a.get('rating', 0))
+        best_name = best_agent.get('display_name') or best_agent.get('name')
+        best_rating = best_agent.get('rating', 1500)
+        best_rank = best_agent.get('rank')
+
+        # 어제 레이팅 변화 (있는 경우)
+        rating_changes = []
+        for agent in agents:
+            if 'rating_history' in agent and len(agent['rating_history']) > 1:
+                recent = agent['rating_history'][-1]
+                previous = agent['rating_history'][-2]
+                delta = recent.get('rating', 0) - previous.get('rating', 0)
+                if delta != 0:
+                    name = agent.get('display_name') or agent.get('name')
+                    rating_changes.append((name, delta))
+
+        # 메시지 구성
+        lines = [
+            "📊 일일 브리핑",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            "",
+            f"🤖 에이전트: {len(agents)}개",
+            f"⚔️ 총 배틀: {total_battles}회 ({total_wins}승 {total_losses}패)",
+            "",
+            f"🏆 최고 에이전트: {best_name}",
+            f"   Rating: {best_rating:,.0f}" + (f" (#{best_rank})" if best_rank else ""),
+        ]
+
+        # 레이팅 변동 표시
+        if rating_changes:
+            lines.append("")
+            lines.append("📈 레이팅 변동:")
+            for name, delta in sorted(rating_changes, key=lambda x: -x[1])[:3]:
+                sign = "+" if delta > 0 else ""
+                arrow = "⬆️" if delta > 0 else "⬇️"
+                lines.append(f"   {arrow} {name}: {sign}{delta:.0f}")
+
+        # 리더보드 Top 3
+        try:
+            leaderboard = api.get_leaderboard(limit=3)
+            if leaderboard:
+                lines.append("")
+                lines.append("🏅 리더보드 Top 3:")
+                medals = ['🥇', '🥈', '🥉']
+                for i, leader in enumerate(leaderboard[:3]):
+                    name = leader.get('display_name') or leader.get('name')
+                    rating = leader.get('rating', 0)
+                    lines.append(f"   {medals[i]} {name} - {rating:,.0f}")
+        except Exception:
+            pass
+
+        lines.append("")
+        lines.append("💡 '배틀 시작해'로 오늘도 화이팅!")
+
+        return "\n".join(lines)
+
+    except PawnedAPIError as e:
+        return f"❌ 브리핑 실패: {e.message}"
+    except Exception as e:
+        return f"❌ 브리핑 오류: {str(e)}"
+
+
 # ============== CLI 테스트 ==============
 
 if __name__ == "__main__":
@@ -626,6 +712,7 @@ if __name__ == "__main__":
         print("  import <username>      - Moltbook import")
         print("  last                   - 마지막 배틀 결과")
         print("  heartbeat              - 알림 체크")
+        print("  daily                  - 일일 브리핑")
         sys.exit(0)
 
     command = sys.argv[1].lower()
@@ -663,6 +750,9 @@ if __name__ == "__main__":
         elif command == "heartbeat":
             messages = heartbeat()
             result = "\n---\n".join(messages) if messages else "새로운 알림이 없습니다."
+
+        elif command == "daily":
+            result = daily_briefing()
 
         else:
             print(f"Unknown command: {command}")
