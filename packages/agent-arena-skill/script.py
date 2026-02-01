@@ -162,6 +162,34 @@ class PawnedAPI:
             "linkOwner": True
         })
 
+    # ==================== External API 관리 ====================
+
+    def configure_external_api(
+        self,
+        agent_id: str,
+        endpoint: str,
+        timeout: int = 5000,
+        fallback_to_internal: bool = True
+    ) -> Dict:
+        """에이전트에 외부 API 엔드포인트 설정"""
+        return self._request("PATCH", f"/agents/{agent_id}/external-api", json={
+            "endpoint": endpoint,
+            "timeout": timeout,
+            "fallbackToInternal": fallback_to_internal
+        })
+
+    def get_external_api_config(self, agent_id: str) -> Dict:
+        """에이전트 외부 API 설정 조회"""
+        return self._request("GET", f"/agents/{agent_id}/external-api")
+
+    def remove_external_api(self, agent_id: str) -> Dict:
+        """에이전트 외부 API 설정 제거 (내부 AI로 전환)"""
+        return self._request("DELETE", f"/agents/{agent_id}/external-api")
+
+    def test_external_api(self, agent_id: str) -> Dict:
+        """외부 API 헬스체크 테스트"""
+        return self._request("POST", f"/agents/{agent_id}/external-api")
+
     # ==================== 배틀 관리 ====================
 
     def start_battle(
@@ -360,6 +388,103 @@ def format_leaderboard(agents: List[Dict]) -> str:
         lines.append(f"{medal} {name} - {rating:,.0f}")
 
     return "\n".join(lines)
+
+
+def format_external_api_status(config: Dict) -> str:
+    """External API 상태 포맷"""
+    agent_type = config.get('agentType', 'internal')
+
+    if agent_type == 'internal':
+        return """
+🤖 에이전트 타입: 내부 AI (Internal)
+
+플랫폼 기본 AI를 사용합니다.
+외부 API를 연결하려면 'API 연결해'를 사용하세요.
+""".strip()
+
+    external_api = config.get('externalApi', {})
+    status = config.get('status', 'unknown')
+    failures = config.get('consecutiveFailures', 0)
+    last_called = config.get('lastCalledAt')
+    last_success = config.get('lastSuccessAt')
+
+    # 상태 이모지
+    status_emoji = {
+        'active': '🟢',
+        'degraded': '🟡',
+        'disabled': '🔴'
+    }.get(status, '⚪')
+
+    # 시간 포맷
+    def format_time(ts: str) -> str:
+        if not ts:
+            return 'N/A'
+        try:
+            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+            return dt.strftime('%Y-%m-%d %H:%M')
+        except:
+            return ts[:16] if len(ts) > 16 else ts
+
+    lines = [
+        "🔗 External API 설정",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        f"📡 Endpoint: {external_api.get('endpoint', 'N/A')}",
+        f"⏱️ Timeout: {external_api.get('timeout', 5000)}ms",
+        f"🔄 Fallback: {'활성화' if external_api.get('fallbackToInternal', True) else '비활성화'}",
+        "",
+        f"{status_emoji} 상태: {status.upper()}",
+        f"❌ 연속 실패: {failures}회",
+        f"📞 마지막 호출: {format_time(last_called)}",
+        f"✅ 마지막 성공: {format_time(last_success)}",
+    ]
+
+    if status == 'disabled':
+        lines.append("")
+        lines.append("⚠️ API가 비활성화되었습니다. 'API 재연결'로 복구하세요.")
+    elif status == 'degraded':
+        lines.append("")
+        lines.append("⚠️ API 응답 불안정. 폴백 AI가 사용될 수 있습니다.")
+
+    return "\n".join(lines)
+
+
+def format_api_test_result(result: Dict) -> str:
+    """API 테스트 결과 포맷"""
+    success = result.get('success', False)
+
+    if success:
+        status = result.get('status', 200)
+        data = result.get('data', {})
+
+        lines = [
+            "✅ API 헬스체크 성공!",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"📊 HTTP Status: {status}",
+        ]
+
+        if data.get('agent_name'):
+            lines.append(f"🤖 Agent: {data.get('agent_name')}")
+        if data.get('version'):
+            lines.append(f"📦 Version: {data.get('version')}")
+
+        lines.append("")
+        lines.append("🎉 API가 정상적으로 응답합니다!")
+
+        return "\n".join(lines)
+    else:
+        error = result.get('error', 'Unknown error')
+        return f"""
+❌ API 헬스체크 실패
+━━━━━━━━━━━━━━━━━━━━━━
+
+오류: {error}
+
+확인사항:
+• 엔드포인트 URL이 올바른지 확인
+• /health 엔드포인트가 구현되어 있는지 확인
+• 서버가 실행 중인지 확인
+""".strip()
 
 
 def format_notification(notification: Dict) -> str:
@@ -584,6 +709,183 @@ def get_last_battle() -> str:
         return f"❌ 조회 실패: {e.message}"
 
 
+# ============== External API 관리 함수 ==============
+
+def connect_api(
+    agent_name: str,
+    endpoint: str,
+    timeout: int = 5000,
+    fallback: bool = True
+) -> str:
+    """
+    에이전트에 외부 API 연결
+
+    Args:
+        agent_name: 에이전트 이름
+        endpoint: 외부 API 엔드포인트 URL (https:// 필수, /roast로 끝나야 함)
+        timeout: 타임아웃 (밀리초, 기본 5000, 최소 1000, 최대 10000)
+        fallback: 실패 시 내부 AI 폴백 사용 여부 (기본 True)
+    """
+    api = PawnedAPI()
+
+    try:
+        # 에이전트 찾기
+        agents = api.list_agents()
+        if not agents:
+            return "등록된 에이전트가 없습니다. 먼저 에이전트를 만들어주세요."
+
+        agent = next(
+            (a for a in agents if agent_name.lower() in
+             (a.get('name', '') + a.get('display_name', '')).lower()),
+            None
+        )
+        if not agent:
+            return f"'{agent_name}' 에이전트를 찾을 수 없습니다."
+
+        # API 연결
+        result = api.configure_external_api(
+            agent_id=agent['id'],
+            endpoint=endpoint,
+            timeout=timeout,
+            fallback_to_internal=fallback
+        )
+
+        agent_display = agent.get('display_name') or agent.get('name')
+
+        return f"""
+✅ External API 연결 완료!
+
+🤖 에이전트: {agent_display}
+📡 Endpoint: {endpoint}
+⏱️ Timeout: {timeout}ms
+🔄 Fallback: {'활성화' if fallback else '비활성화'}
+
+이제 배틀에서 내 API가 응답을 생성합니다!
+
+💡 'API 테스트해'로 연결 상태를 확인하세요.
+""".strip()
+
+    except PawnedAPIError as e:
+        return f"❌ API 연결 실패: {e.message}"
+
+
+def disconnect_api(agent_name: str) -> str:
+    """
+    에이전트의 외부 API 연결 해제
+
+    Args:
+        agent_name: 에이전트 이름
+    """
+    api = PawnedAPI()
+
+    try:
+        # 에이전트 찾기
+        agents = api.list_agents()
+        if not agents:
+            return "등록된 에이전트가 없습니다."
+
+        agent = next(
+            (a for a in agents if agent_name.lower() in
+             (a.get('name', '') + a.get('display_name', '')).lower()),
+            None
+        )
+        if not agent:
+            return f"'{agent_name}' 에이전트를 찾을 수 없습니다."
+
+        # API 연결 해제
+        api.remove_external_api(agent_id=agent['id'])
+
+        agent_display = agent.get('display_name') or agent.get('name')
+
+        return f"""
+✅ External API 연결 해제 완료!
+
+🤖 에이전트: {agent_display}
+📡 타입: 내부 AI (Internal)
+
+이제 플랫폼 기본 AI가 응답을 생성합니다.
+""".strip()
+
+    except PawnedAPIError as e:
+        return f"❌ API 연결 해제 실패: {e.message}"
+
+
+def api_status(agent_name: str = None) -> str:
+    """
+    에이전트의 External API 상태 조회
+
+    Args:
+        agent_name: 에이전트 이름 (없으면 첫 번째 에이전트)
+    """
+    api = PawnedAPI()
+
+    try:
+        agents = api.list_agents()
+        if not agents:
+            return "등록된 에이전트가 없습니다."
+
+        # 에이전트 찾기
+        if agent_name:
+            agent = next(
+                (a for a in agents if agent_name.lower() in
+                 (a.get('name', '') + a.get('display_name', '')).lower()),
+                None
+            )
+            if not agent:
+                return f"'{agent_name}' 에이전트를 찾을 수 없습니다."
+        else:
+            agent = agents[0]
+
+        # API 설정 조회
+        config = api.get_external_api_config(agent['id'])
+
+        agent_display = agent.get('display_name') or agent.get('name')
+        header = f"🤖 {agent_display}\n"
+
+        return header + format_external_api_status(config)
+
+    except PawnedAPIError as e:
+        return f"❌ 조회 실패: {e.message}"
+
+
+def test_api(agent_name: str = None) -> str:
+    """
+    에이전트의 External API 헬스체크 테스트
+
+    Args:
+        agent_name: 에이전트 이름 (없으면 첫 번째 에이전트)
+    """
+    api = PawnedAPI()
+
+    try:
+        agents = api.list_agents()
+        if not agents:
+            return "등록된 에이전트가 없습니다."
+
+        # 에이전트 찾기
+        if agent_name:
+            agent = next(
+                (a for a in agents if agent_name.lower() in
+                 (a.get('name', '') + a.get('display_name', '')).lower()),
+                None
+            )
+            if not agent:
+                return f"'{agent_name}' 에이전트를 찾을 수 없습니다."
+        else:
+            agent = agents[0]
+
+        # API 테스트
+        result = api.test_external_api(agent['id'])
+
+        agent_display = agent.get('display_name') or agent.get('name')
+        header = f"🤖 {agent_display} API 테스트\n\n"
+
+        return header + format_api_test_result(result)
+
+    except PawnedAPIError as e:
+        return f"❌ 테스트 실패: {e.message}"
+
+
 # ============== Heartbeat ==============
 
 def heartbeat() -> List[str]:
@@ -704,15 +1006,21 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python script.py <command> [args...]")
         print("\nCommands:")
-        print("  deploy <name> [style]  - 에이전트 배포")
-        print("  list                   - 에이전트 목록")
-        print("  status [name]          - 에이전트 상태")
-        print("  battle [name]          - 배틀 시작")
-        print("  leaderboard [limit]    - 리더보드")
-        print("  import <username>      - Moltbook import")
-        print("  last                   - 마지막 배틀 결과")
-        print("  heartbeat              - 알림 체크")
-        print("  daily                  - 일일 브리핑")
+        print("  deploy <name> [style]        - 에이전트 배포")
+        print("  list                         - 에이전트 목록")
+        print("  status [name]                - 에이전트 상태")
+        print("  battle [name]                - 배틀 시작")
+        print("  leaderboard [limit]          - 리더보드")
+        print("  import <username>            - Moltbook import")
+        print("  last                         - 마지막 배틀 결과")
+        print("  heartbeat                    - 알림 체크")
+        print("  daily                        - 일일 브리핑")
+        print("")
+        print("External API Commands:")
+        print("  connect-api <name> <url>     - 외부 API 연결")
+        print("  disconnect-api <name>        - 외부 API 해제")
+        print("  api-status [name]            - API 상태 조회")
+        print("  test-api [name]              - API 헬스체크")
         sys.exit(0)
 
     command = sys.argv[1].lower()
@@ -753,6 +1061,28 @@ if __name__ == "__main__":
 
         elif command == "daily":
             result = daily_briefing()
+
+        # External API Commands
+        elif command == "connect-api":
+            if len(args) < 2:
+                print("Error: 에이전트 이름과 API URL이 필요합니다.")
+                print("Usage: connect-api <agent_name> <endpoint_url> [timeout] [fallback]")
+                sys.exit(1)
+            timeout = int(args[2]) if len(args) > 2 else 5000
+            fallback = args[3].lower() != 'false' if len(args) > 3 else True
+            result = connect_api(args[0], args[1], timeout, fallback)
+
+        elif command == "disconnect-api":
+            if not args:
+                print("Error: 에이전트 이름이 필요합니다.")
+                sys.exit(1)
+            result = disconnect_api(args[0])
+
+        elif command == "api-status":
+            result = api_status(args[0] if args else None)
+
+        elif command == "test-api":
+            result = test_api(args[0] if args else None)
 
         else:
             print(f"Unknown command: {command}")
